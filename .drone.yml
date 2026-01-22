@@ -1,0 +1,236 @@
+---
+kind: secret
+name: docker_registry_user
+get:
+  path: drone/data/${DRONE_REPO_NAMESPACE}/global
+  name: vault_registry_user
+
+---
+kind: secret
+name: docker_registry_password
+get:
+  path: drone/data/${DRONE_REPO_NAMESPACE}/global
+  name: vault_registry_password
+
+---
+kind: secret
+name: k8s_pz_production_namespace
+get:
+  path: drone/data/${DRONE_REPO_NAMESPACE}/global
+  name: k8s_pz_production_namespace
+
+---
+kind: secret
+name: k8s_pz_staging_namespace
+get:
+  path: drone/data/${DRONE_REPO_NAMESPACE}/global
+  name: k8s_pz_staging_namespace
+
+---
+kind: secret
+name: k8s_pz_production_config
+get:
+  path: drone/data/${DRONE_REPO_NAMESPACE}/global
+  name: k8s_pz_production_config
+
+---
+kind: pipeline
+type: docker
+name: default
+
+volumes:
+  - name: cache
+    host:
+      path: /tmp/drone/cache
+
+steps:
+  - name: restore build cache
+    image: drillster/drone-volume-cache
+    settings:
+      restore: 'true'
+      mount:
+        - ./node_modules
+        - ./dist
+    volumes:
+      - name: cache
+        path: /cache
+
+  - name: build attendance-odoo-bot
+    image: node:20-alpine
+    commands:
+      - echo "Building attendance-odoo-bot..."
+      - yarn install --frozen-lockfile
+      - yarn build
+
+  - name: rebuild build cache
+    image: drillster/drone-volume-cache
+    settings:
+      rebuild: 'true'
+      mount:
+        - ./node_modules
+        - ./dist
+    volumes:
+      - name: cache
+        path: /cache
+    when:
+      status:
+        - success
+        - failure
+
+trigger:
+  branch:
+    exclude:
+      - develop
+      - main
+  event:
+    exclude:
+      - custom
+    include:
+      - push
+
+---
+kind: pipeline
+type: docker
+name: publish develop image
+
+volumes:
+  - name: cache
+    host:
+      path: /tmp/drone/cache
+
+steps:
+  - name: build and publish image
+    image: plugins/docker
+    settings:
+      repo: 'productzilla/attendance-odoo-bot'
+      username:
+        from_secret: docker_registry_user
+      password:
+        from_secret: docker_registry_password
+      dockerfile: misc/docker/Dockerfile
+      tag: dev
+
+  - name: deploy to staging
+    image: alpine:latest
+    environment:
+      SERVER_CONFIG:
+        from_secret: k8s_pz_production_config
+      NAMESPACE:
+        from_secret: k8s_pz_staging_namespace
+    commands:
+      - apk add --no-cache curl
+      - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+      - chmod +x kubectl
+      - mv kubectl /usr/local/bin/
+      - kubectl version --client
+      - mkdir -p /root/.kube
+      - echo $SERVER_CONFIG | base64 -d > /root/.kube/config
+      - cat misc/deployment/k8s.template.staging.yml | sed "s/{{tags}}/dev/g" | sed "s/{{namespace}}/$NAMESPACE/g" > 'misc/deployment/k8s.generated.yml'
+      - kubectl -n $NAMESPACE apply -f 'misc/deployment/k8s.generated.yml'
+      - kubectl -n $NAMESPACE rollout restart deployment/attendance-odoo-bot-staging
+
+trigger:
+  branch:
+    - develop
+  event:
+    exclude:
+      - pull_request
+
+depends_on:
+  - default
+
+---
+kind: pipeline
+type: docker
+name: build production image
+
+volumes:
+  - name: cache
+    host:
+      path: /tmp/drone/cache
+
+steps:
+  - name: restore build cache
+    image: drillster/drone-volume-cache
+    settings:
+      restore: 'true'
+      mount:
+        - ./node_modules
+        - ./dist
+    volumes:
+      - name: cache
+        path: /cache
+
+  - name: generate tag for image publish
+    image: alpine:3.13.6
+    commands:
+      - echo -n "${DRONE_TAG}" > .tags
+
+  - name: build and publish image
+    image: plugins/docker
+    settings:
+      repo: 'productzilla/attendance-odoo-bot'
+      username:
+        from_secret: docker_registry_user
+      password:
+        from_secret: docker_registry_password
+      dockerfile: misc/docker/Dockerfile
+
+  - name: rebuild build cache
+    image: drillster/drone-volume-cache
+    settings:
+      rebuild: 'true'
+      mount:
+        - ./node_modules
+        - ./dist
+    volumes:
+      - name: cache
+        path: /cache
+    when:
+      status:
+        - success
+        - failure
+
+trigger:
+  ref:
+    - refs/tags/*
+
+---
+kind: pipeline
+type: docker
+name: deploy production image
+
+steps:
+  - name: generate tag for image publish
+    image: alpine:3.13.6
+    commands:
+      - if [ "$IMAGE_VERSION" == "" ]; then exit 1; fi;
+      - echo -n "${IMAGE_VERSION}" > .tags
+
+  - name: deploy
+    image: alpine:latest
+    environment:
+      SERVER_CONFIG:
+        from_secret: k8s_pz_production_config
+      NAMESPACE:
+        from_secret: k8s_pz_production_namespace
+    commands:
+      - apk add --no-cache curl
+      - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+      - chmod +x kubectl
+      - mv kubectl /usr/local/bin/
+      - kubectl version --client
+      - export IMAGE_VERSION=$(cat .tags)
+      - echo "IMAGE VERSION=$IMAGE_VERSION"
+      - echo "NAMESPACE=$NAMESPACE"
+      - mkdir -p /root/.kube
+      - echo $SERVER_CONFIG | base64 -d > /root/.kube/config
+      - cat misc/deployment/k8s.template.yml | sed "s/{{tags}}/$IMAGE_VERSION/g" | sed "s/{{namespace}}/$NAMESPACE/g" > 'misc/deployment/k8s.generated.yml'
+      - kubectl -n $NAMESPACE apply -f 'misc/deployment/k8s.generated.yml'
+      - kubectl -n $NAMESPACE rollout restart deployment/attendance-odoo-bot
+
+trigger:
+  branch:
+    - main
+  event:
+    - custom
