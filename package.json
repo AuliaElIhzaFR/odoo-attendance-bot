@@ -5,10 +5,16 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "automation": "tsx src/automation.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
-  "keywords": ["telegram", "odoo", "attendance", "bot"],
+  "keywords": [
+    "telegram",
+    "odoo",
+    "attendance",
+    "bot"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
