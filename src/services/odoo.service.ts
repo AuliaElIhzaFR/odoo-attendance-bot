@@ -18,7 +18,7 @@ export class OdooService {
 
   constructor(config: OdooConfig) {
     this.config = config;
-    
+
     // Create axios instance dengan cookie jar
     this.axiosInstance = axios.create({
       baseURL: config.url,
@@ -42,7 +42,7 @@ export class OdooService {
   async login(): Promise<boolean> {
     try {
       console.log('🔐 Logging in to Odoo...');
-      
+
       // Step 0: Request homepage first to get Cloudflare cookies
       console.log('📡 Getting Cloudflare cookies from homepage...');
       const homepageResponse = await axios.get(
@@ -57,7 +57,7 @@ export class OdooService {
           }),
         }
       );
-      
+
       // Extract Cloudflare cookies
       const cfCookies = homepageResponse.headers['set-cookie'];
       let cookieString = '';
@@ -65,10 +65,10 @@ export class OdooService {
         cookieString = cfCookies.map((c: string) => c.split(';')[0]).join('; ');
         console.log('🍪 Got Cloudflare cookies:', cookieString.substring(0, 100) + '...');
       }
-      
+
       // Step 1: Get login page dengan Cloudflare cookies
       console.log('📡 Requesting login page with cookies...');
-      
+
       let loginPageResponse = await axios.get(
         `${this.config.url}/web/login?db=${this.config.database}`,
         {
@@ -91,21 +91,21 @@ export class OdooService {
         }
         throw err;
       });
-      
+
       console.log('📊 Login page status:', loginPageResponse.status);
-      
+
       // If we got a redirect, follow it manually
       if (loginPageResponse.status === 302 || loginPageResponse.status === 303) {
         const location = loginPageResponse.headers['location'];
         console.log('📍 Server redirected to:', location);
-        
+
         // Update cookies if server sent new ones
         const newCookies = loginPageResponse.headers['set-cookie'];
         if (newCookies) {
           cookieString = newCookies.map((c: string) => c.split(';')[0]).join('; ');
           console.log('🍪 Updated cookies');
         }
-        
+
         // Follow the redirect
         loginPageResponse = await axios.get(
           location.startsWith('http') ? location : `${this.config.url}${location}`,
@@ -123,21 +123,21 @@ export class OdooService {
         );
         console.log('📊 After redirect, status:', loginPageResponse.status);
       }
-      
+
       console.log('📊 Data preview:', loginPageResponse.data?.substring(0, 200));
-      
+
       // Extract CSRF token dari response HTML
       const htmlContent = loginPageResponse.data;
-      
+
       // Try multiple patterns untuk find CSRF token
       let csrfToken = null;
-      
+
       // Pattern 1: input field (most common)
       const inputMatch = htmlContent.match(/<input[^>]*name=["']csrf_token["'][^>]*value=["']([^"']+)["']/i);
       if (inputMatch) {
         csrfToken = inputMatch[1];
       }
-      
+
       // Pattern 2: reverse order
       if (!csrfToken) {
         const inputMatch2 = htmlContent.match(/<input[^>]*value=["']([^"']+)["'][^>]*name=["']csrf_token["']/i);
@@ -145,7 +145,7 @@ export class OdooService {
           csrfToken = inputMatch2[1];
         }
       }
-      
+
       // Pattern 3: JavaScript variable
       if (!csrfToken) {
         const jsMatch = htmlContent.match(/csrf_token["']?\s*[:=]\s*["']([a-zA-Z0-9]+)["']/i);
@@ -153,7 +153,7 @@ export class OdooService {
           csrfToken = jsMatch[1];
         }
       }
-      
+
       // Pattern 4: odoo session info
       if (!csrfToken) {
         const odooMatch = htmlContent.match(/"csrf_token"\s*:\s*"([^"]+)"/i);
@@ -161,7 +161,7 @@ export class OdooService {
           csrfToken = odooMatch[1];
         }
       }
-      
+
       // Pattern 5: Look for any token-like string in the HTML
       if (!csrfToken) {
         const tokenMatch = htmlContent.match(/([a-f0-9]{40,}o\d+)/i);
@@ -170,9 +170,9 @@ export class OdooService {
           console.log('   Found token-like pattern:', csrfToken.substring(0, 20) + '...');
         }
       }
-      
+
       this.csrfToken = csrfToken;
-      
+
       // Extract session_id dari cookies  
       // Update cookieString with session from login page
       const pageCookies = loginPageResponse.headers['set-cookie'];
@@ -267,8 +267,8 @@ export class OdooService {
 
       // For non-redirect responses, check the HTML content
       if (loginResponse.data && typeof loginResponse.data === 'string') {
-        if (loginResponse.data.includes('Wrong login/password') || 
-            loginResponse.data.includes('alert alert-danger')) {
+        if (loginResponse.data.includes('Wrong login/password') ||
+          loginResponse.data.includes('alert alert-danger')) {
           console.error('❌ Login failed: Wrong credentials');
           return false;
         }
@@ -283,6 +283,38 @@ export class OdooService {
         console.error('   URL:', error.response.config?.url);
       }
       return false;
+    }
+  }
+
+  /**
+   * Mendapatkan informasi session saat ini (termasuk UID)
+   */
+  async getSessionInfo(): Promise<any> {
+    try {
+      if (!this.sessionId) {
+        await this.login();
+      }
+
+      const response = await this.axiosInstance.post(
+        '/web/session/get_session_info',
+        {
+          jsonrpc: '2.0',
+          method: 'call',
+          params: {}
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': `session_id=${this.sessionId}`,
+            'X-Requested-With': 'XMLHttpRequest',
+          }
+        }
+      );
+
+      return response.data?.result;
+    } catch (error: any) {
+      console.error('❌ Error getting session info:', error.message);
+      return null;
     }
   }
 
@@ -334,7 +366,7 @@ export class OdooService {
       if (response.data && response.data.error) {
         const errorMsg = response.data.error.data?.message || response.data.error.message || 'Unknown error';
         console.error('❌ JSON-RPC Error:', errorMsg);
-        
+
         // If session error, retry with login
         if (errorMsg.includes('session') || errorMsg.includes('login')) {
           console.log('🔄 Session expired, trying to re-login...');
@@ -344,7 +376,7 @@ export class OdooService {
           this.isRetrying = false;
           return result;
         }
-        
+
         return { success: false, message: `❌ ${errorMsg}` };
       }
 
@@ -352,30 +384,30 @@ export class OdooService {
       if (response.data && response.data.result !== undefined) {
         const result = response.data.result;
         console.log('✅ Attendance action result:', result);
-        
-        return { 
-          success: true, 
-          message: `✅ Attendance action berhasil!` 
+
+        return {
+          success: true,
+          message: `✅ Attendance action berhasil!`
         };
       }
 
       return { success: false, message: '❌ Unexpected response format' };
     } catch (error: any) {
       console.error('❌ Check-in error:', error.message);
-      
+
       // Log more details
       if (error.response) {
         console.error('   Status:', error.response.status);
-        console.error('   Data:', typeof error.response.data === 'string' 
-          ? error.response.data.substring(0, 200) 
+        console.error('   Data:', typeof error.response.data === 'string'
+          ? error.response.data.substring(0, 200)
           : error.response.data);
       }
-      
+
       // Retry dengan login ulang untuk error 404, 401, 403
-      if (!this.isRetrying && 
-          (error.response?.status === 404 || 
-           error.response?.status === 401 || 
-           error.response?.status === 403)) {
+      if (!this.isRetrying &&
+        (error.response?.status === 404 ||
+          error.response?.status === 401 ||
+          error.response?.status === 403)) {
         console.log('🔄 Auth issue, trying to re-login once...');
         this.sessionId = null;
         this.isRetrying = true;
@@ -383,10 +415,10 @@ export class OdooService {
         this.isRetrying = false;
         return result;
       }
-      
-      return { 
-        success: false, 
-        message: `❌ Error: ${error.response?.status || error.message}` 
+
+      return {
+        success: false,
+        message: `❌ Error: ${error.response?.status || error.message}`
       };
     }
   }
@@ -403,49 +435,55 @@ export class OdooService {
   /**
    * Get current attendance status
    */
-  async getAttendanceStatus(): Promise<{ isCheckedIn: boolean; lastAction?: string }> {
+  async getAttendanceStatus(): Promise<{ isCheckedIn: boolean; lastAction?: string; employeeName?: string }> {
     try {
-      if (!this.sessionId) {
-        await this.login();
+      const sessionInfo = await this.getSessionInfo();
+      if (!sessionInfo || !sessionInfo.uid) {
+        return { isCheckedIn: false };
       }
 
-      console.log('📊 Getting attendance status...');
+      console.log(`📊 Getting attendance status for UID: ${sessionInfo.uid}...`);
 
-      // Call endpoint untuk get status
+      // Call search_read on hr.employee
       const response = await this.axiosInstance.post(
-        '/hr_attendance/systray_check_in_out',
+        '/web/dataset/call_kw',
         {
-          id: Math.floor(Math.random() * 1000),
           jsonrpc: '2.0',
           method: 'call',
-          params: {}
+          params: {
+            model: 'hr.employee',
+            method: 'search_read',
+            args: [],
+            kwargs: {
+              domain: [['user_id', '=', sessionInfo.uid]],
+              fields: ['attendance_state', 'name'],
+              limit: 1
+            }
+          }
         },
         {
           headers: {
             'Content-Type': 'application/json',
-            'Accept': '*/*',
-            'Cookie': `session_id=${this.sessionId}; tz=Asia/Jakarta; cids=1`,
+            'Cookie': `session_id=${this.sessionId}`,
             'X-Requested-With': 'XMLHttpRequest',
           },
           timeout: 10000,
         }
       );
 
-      console.log('📊 Status response:', response.data);
-
-      // Response akan berisi info apakah user sudah check in atau belum
-      if (response.data && response.data.result) {
-        // Biasanya Odoo return object dengan info attendance
-        return { 
-          isCheckedIn: !!response.data.result.attendance,
-          lastAction: response.data.result.attendance ? 'Checked In' : 'Checked Out'
+      if (response.data && response.data.result && response.data.result.length > 0) {
+        const employee = response.data.result[0];
+        const isCheckedIn = employee.attendance_state === 'checked_in';
+        return {
+          isCheckedIn,
+          lastAction: isCheckedIn ? 'Checked In' : 'Checked Out',
+          employeeName: employee.name
         };
       }
 
       return { isCheckedIn: false };
     } catch (error: any) {
       console.error('❌ Error getting attendance status:', error.message);
-      // Don't throw, just return default
       return { isCheckedIn: false };
     }
   }

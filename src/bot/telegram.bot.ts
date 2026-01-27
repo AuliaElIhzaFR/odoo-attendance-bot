@@ -14,7 +14,7 @@ export class AttendanceBot {
     this.bot = new TelegramBot(botToken, { polling: true });
     this.odooService = odooService;
     this.allowedUserIds = new Set(allowedUserIds);
-    
+
     this.setupCommands();
     this.setupErrorHandler();
   }
@@ -58,7 +58,26 @@ Gunakan command di atas untuk mulai absen! 🚀
 
       try {
         // Send loading message
-        const loadingMsg = await this.bot.sendMessage(chatId, '⏳ Sedang melakukan check-in...');
+        const loadingMsg = await this.bot.sendMessage(chatId, '⏳ Sedang mengecek status...');
+
+        // Check current status first
+        const status = await this.odooService.getAttendanceStatus();
+
+        if (status.isCheckedIn) {
+          await this.bot.deleteMessage(chatId, loadingMsg.message_id);
+          await this.bot.sendMessage(
+            chatId,
+            `✅ *Anda sudah check-in!*\n\nNama: ${status.employeeName || 'User'}\nStatus: ${status.lastAction}`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        // Update loading message
+        await this.bot.editMessageText('⏳ Sedang melakukan check-in...', {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id
+        });
 
         // Perform check-in
         const result = await this.odooService.checkIn();
@@ -69,12 +88,12 @@ Gunakan command di atas untuk mulai absen! 🚀
         // Send result
         if (result.success) {
           const now = new Date();
-          const timeString = now.toLocaleTimeString('id-ID', { 
+          const timeString = now.toLocaleTimeString('id-ID', {
             timeZone: 'Asia/Jakarta',
             hour: '2-digit',
             minute: '2-digit'
           });
-          
+
           await this.bot.sendMessage(
             chatId,
             `✅ *Check-in Berhasil!*\n\n⏰ Waktu: ${timeString} WIB`,
@@ -104,7 +123,26 @@ Gunakan command di atas untuk mulai absen! 🚀
 
       try {
         // Send loading message
-        const loadingMsg = await this.bot.sendMessage(chatId, '⏳ Sedang melakukan check-out...');
+        const loadingMsg = await this.bot.sendMessage(chatId, '⏳ Sedang mengecek status...');
+
+        // Check current status first
+        const status = await this.odooService.getAttendanceStatus();
+
+        if (!status.isCheckedIn) {
+          await this.bot.deleteMessage(chatId, loadingMsg.message_id);
+          await this.bot.sendMessage(
+            chatId,
+            `❌ *Anda belum check-in!*\n\nNama: ${status.employeeName || 'User'}\nStatus: ${status.lastAction}`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        // Update loading message
+        await this.bot.editMessageText('⏳ Sedang melakukan check-out...', {
+          chat_id: chatId,
+          message_id: loadingMsg.message_id
+        });
 
         // Perform check-out
         const result = await this.odooService.checkOut();
@@ -115,12 +153,12 @@ Gunakan command di atas untuk mulai absen! 🚀
         // Send result
         if (result.success) {
           const now = new Date();
-          const timeString = now.toLocaleTimeString('id-ID', { 
+          const timeString = now.toLocaleTimeString('id-ID', {
             timeZone: 'Asia/Jakarta',
             hour: '2-digit',
             minute: '2-digit'
           });
-          
+
           await this.bot.sendMessage(
             chatId,
             `✅ *Check-out Berhasil!*\n\n⏰ Waktu: ${timeString} WIB`,
@@ -150,11 +188,12 @@ Gunakan command di atas untuk mulai absen! 🚀
 
       try {
         const status = await this.odooService.getAttendanceStatus();
-        const statusText = status.isCheckedIn ? '✅ Sudah Check-in' : '❌ Belum Check-in';
-        
+        const statusIcon = status.isCheckedIn ? '✅' : '❌';
+        const statusText = status.isCheckedIn ? 'Sudah Check-in' : 'Belum Check-in';
+
         await this.bot.sendMessage(
           chatId,
-          `📊 *Status Attendance*\n\n${statusText}`,
+          `📊 *Status Attendance*\n\nNama: ${status.employeeName || 'User'}\nStatus: ${statusIcon} ${statusText}`,
           { parse_mode: 'Markdown' }
         );
       } catch (error: any) {
