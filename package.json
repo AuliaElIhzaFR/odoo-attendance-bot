@@ -2,12 +2,12 @@
   "name": "attendance-odoo-bot",
   "version": "1.0.0",
   "description": "Telegram bot untuk absen Odoo",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "automation": "tsx src/automation.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/src/index.js"
   },
   "keywords": [
     "telegram",
