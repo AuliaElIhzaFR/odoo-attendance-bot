@@ -9,9 +9,10 @@ export class AttendanceBot {
   constructor(
     botToken: string,
     odooService: OdooService,
-    allowedUserIds: number[]
+    allowedUserIds: number[],
+    options: { polling?: boolean } = { polling: true }
   ) {
-    this.bot = new TelegramBot(botToken, { polling: true });
+    this.bot = new TelegramBot(botToken, { polling: options.polling });
     this.odooService = odooService;
     this.allowedUserIds = new Set(allowedUserIds);
 
@@ -261,7 +262,13 @@ Jika ada masalah, hubungi admin! 👨‍💻
   }
 
   public stop(): void {
-    this.bot.stopPolling();
+    if (this.bot.isPolling()) {
+      this.bot.stopPolling();
+    }
     console.log('🛑 Bot stopped');
+  }
+
+  public async handleUpdate(update: any): Promise<void> {
+    this.bot.processUpdate(update);
   }
 }

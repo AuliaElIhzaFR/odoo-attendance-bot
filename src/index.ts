@@ -55,8 +55,12 @@ const bot = new AttendanceBot(
   allowedUserIds
 );
 
-// Start bot
-bot.start();
+// Start bot if not in webhook mode
+if (process.env.USE_WEBHOOK !== 'true') {
+  bot.start();
+} else {
+  console.log('🌐 Webhook mode enabled. Waiting for updates via API...');
+}
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
